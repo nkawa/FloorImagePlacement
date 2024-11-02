@@ -20,10 +20,10 @@ from datetime import datetime
 from glob import glob
 from os import makedirs
 from mask_editor import MaskEditor
+from projection_editor import ProjectionEditor
 
 from util.dscamera import DSCamera
-from util.dsutil import *
-from util.dsutil import mask_dir, empty_image_dir, pj_file, calibImage
+from util.dsutil import mask_dir, empty_image_dir, pj_file, calibImage, _crop
 
 
 # 元データが、3990x2312 画像で、縮小動画は 1280x742ピクセル
@@ -107,22 +107,7 @@ def make_outline_image(mask_img,color=(0,255,0),name="non"):
 
 
 
-def _crop(pjs: dict[str, np.ndarray]) -> tuple[dict[str, np.ndarray], tuple[int, int]]:
-    stitched_ltrb = [np.inf, np.inf, -np.inf, -np.inf]
-    for p in pjs.values():
-        tf_corners = cv2.perspectiveTransform(np.array(((0, 0), (1920, 0), (0, 1080), (1920, 1080)), dtype=np.float32)[:, np.newaxis], p).squeeze(axis=1)
-        stitched_ltrb[0] = min(stitched_ltrb[0], tf_corners[0, 0], tf_corners[2, 0])
-        stitched_ltrb[1] = min(stitched_ltrb[1], tf_corners[0, 1], tf_corners[1, 1])
-        stitched_ltrb[2] = max(stitched_ltrb[2], tf_corners[1, 0], tf_corners[3, 0])
-        stitched_ltrb[3] = max(stitched_ltrb[3], tf_corners[2, 1], tf_corners[3, 1])
-    for n, p in pjs.items():
-        pjs[n] = np.dot(np.array((
-            (1, 0, -stitched_ltrb[0]),
-            (0, 1, -stitched_ltrb[1]),
-            (0, 0, 1)
-        ), dtype=np.float64), p)
 
-    return pjs, (int(stitched_ltrb[2] - stitched_ltrb[0]), int(stitched_ltrb[3] - stitched_ltrb[1]))
 
 def stitch(mask_dir: str, pj_file: str, src_dir: str,border, imgflag) -> np.ndarray:
     # load constants
@@ -133,7 +118,7 @@ def stitch(mask_dir: str, pj_file: str, src_dir: str,border, imgflag) -> np.ndar
 
     # prepare constants
     cam_names = pj_dict.keys() 
-    pjs, frm_size = _crop({n: np.array(pj_dict[n]["projective_matrix"], dtype=np.float64) for n in cam_names})
+    pjs, frm_size, _ = _crop({n: np.array(pj_dict[n]["projective_matrix"], dtype=np.float64) for n in cam_names})
 
 
 #    print(pjs)
@@ -162,6 +147,8 @@ def stitch(mask_dir: str, pj_file: str, src_dir: str,border, imgflag) -> np.ndar
 
     return stitched_frm
 
+
+
 class App(tk.Frame):
     def __init__(self,master = None):
         super().__init__(master)
@@ -177,6 +164,7 @@ class App(tk.Frame):
         self.button_sub = tk.Frame(self.button_frame)
 
         self.mask_editor = None
+        self.prj_editor = None
 
         self.canvas = tk.Canvas(self.image_frame, width = cw, height = ch)
         
@@ -214,8 +202,8 @@ class App(tk.Frame):
         self.id_button = tk.Button(self.set_frame,text="change_mask", command=self.mask_dialog,width=10)
         self.id_button.pack(side=tk.LEFT,padx=10)
 
-#        self.cid_button = tk.Button(self.set_frame,text="Change From Here", command=self.loadImages,width=15)
-#        self.cid_button.pack(side=tk.LEFT,padx=10)
+        self.cid_button = tk.Button(self.set_frame,text="Change Projection", command=self.projection,width=15)
+        self.cid_button.pack(side=tk.LEFT,padx=10)
         self.set_frame.pack(padx=10, pady=10)
 
  #       self.track_frame = tk.Frame(self.button_frame)
@@ -275,8 +263,8 @@ class App(tk.Frame):
 #        self.master.bind('<Configure>', change_size)
 
     def loadImages(self):
-        img = stitch(mask_dir, pj_file,empty_image_dir , self.cborder.get(),self.cimg.get())
-        cv_image = cv2.resize(img,dsize=(cw,ch))
+        self.oimg = stitch(mask_dir, pj_file,empty_image_dir , self.cborder.get(),self.cimg.get())
+        cv_image = cv2.resize(self.oimg,dsize=(cw,ch))
         cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         self.pil_image = Image.fromarray(cv_image)
         self.pimg  = ImageTk.PhotoImage(image=self.pil_image)
@@ -313,8 +301,54 @@ class App(tk.Frame):
         self.mask_editor.set_mask(mask_dir+"/"+self.subj_box.get()+".png")
         self.mask_editor.set_image(empty_image_dir+"/camera"+self.subj_box.get()+".jpg")
 
+    def projection(self):
+        if self.subj_box.get() == "":
+            return
+        if self.prj_editor is None:
+            self.pjr_top = tk.Toplevel(self.master)
+            self.prj_editor = ProjectionEditor(self.pjr_top)
 
-        
+        self.prep_stitch()
+        self.prj_editor.set_cam(self.subj_box.get(),self)
+
+    def update_pjs(self, cam, pjs):
+        self.pjs = pjs
+#        print("Update PJS",cam,pjs)
+        self.local_stitch(cam)
+
+    def prep_stitch(self):
+        with open(pj_file) as f:
+            pj_dict: dict[str, dict[str, int | list[list[float]]]] = json.load(f)
+        cam_names = pj_dict.keys() 
+        self.pjs, self.frm_size , _ = _crop({n: np.array(pj_dict[n]["projective_matrix"], dtype=np.float64) for n in cam_names})
+        self.warped_masks = {n: cv2.warpPerspective(cv2.imread(path.join(mask_dir, MASK_REG_EXP(n)), flags=cv2.IMREAD_GRAYSCALE), self.pjs[n], self.frm_size) for n in cam_names}
+        self.warped_masks_outline = {n: make_outline_image(self.warped_masks[n],cam_colors[n],n) for n in cam_names}
+
+
+# 特定のカメラだけ stitch する
+    def local_stitch(self,cam):
+        if self.cimg.get():
+            image = calibImage(cam)
+            cv2.copyTo(cv2.warpPerspective(image, self.pjs[cam], self.frm_size), self.warped_masks[cam], dst=self.oimg)
+        self.warped_masks[cam] =cv2.warpPerspective(cv2.imread(path.join(mask_dir, MASK_REG_EXP(cam)), flags=cv2.IMREAD_GRAYSCALE), self.pjs[cam], self.frm_size)
+        self.warped_masks_outline[cam] =make_outline_image(self.warped_masks[cam],cam_colors[cam],cam) 
+
+        if self.cborder.get():
+            outline, omask = self.warped_masks_outline[cam]
+            cv2.copyTo(outline, omask, dst=self.oimg)
+
+        cv_image = cv2.resize(self.oimg,dsize=(cw,ch))
+        cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        self.pil_image = Image.fromarray(cv_image)
+        self.pimg  = ImageTk.PhotoImage(image=self.pil_image)
+        self.canvas.delete("all")
+        self.canvas.create_image(
+                int(cw/2),       # 画像表示位置(Canvasの中心)
+                int(ch/2),                   
+                image=self.pimg  # 表示画像データ
+        )
+
+
 
 
     
