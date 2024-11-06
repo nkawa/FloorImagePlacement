@@ -23,8 +23,9 @@ from mask_editor import MaskEditor
 from projection_editor import ProjectionEditor
 
 from util.dscamera import DSCamera
-from util.dsutil import mask_dir, empty_image_dir, pj_file, calibImage, _crop
+from util.dsutil import mask_dir, empty_image_dir,alpha_mask_image_dir, pj_file, calibImage, _crop
 
+from util.gen_A_map import generate_A_map
 
 # 元データが、3990x2312 画像で、縮小動画は 1280x742ピクセル
 # 元のトラッキングの位置から、 3885.36, 812.703 シフトさせると、元の動画の位置になる。これを 1280x742 に変換
@@ -92,7 +93,7 @@ def make_outline_image(mask_img,color=(0,255,0),name="non"):
     cv2.drawContours(outline_image, contours, -1, color, 2)
 
     for contour in contours:
-        print("contour",name)
+#        print("contour",name)
         M = cv2.moments(contour)
         if M["m00"] != 0:
             cX = int(M["m10"] / M["m00"])
@@ -104,9 +105,31 @@ def make_outline_image(mask_img,color=(0,255,0),name="non"):
 
     return outline_image, outline_mask
 
+def stitch_with_alpha(alpha_mask_dir: str, pj_dict, border, imgflag) -> np.ndarray:
 
+    cam_names = pj_dict.keys()
+    pjs, frm_size, _ = _crop({n: np.array(pj_dict[n]["projective_matrix"], dtype=np.float64) for n in cam_names})
+    warped_masks = {n: cv2.warpPerspective(cv2.imread(path.join(alpha_mask_dir, MASK_REG_EXP(n)), flags=cv2.IMREAD_GRAYSCALE), pjs[n], frm_size) for n in cam_names}
+    A = {n: warped_masks[n].astype(np.float32) / 255.0 for n in cam_names}
+    A_map = {n: cv2.merge([A[n]]* 3) for n in cam_names}
 
+    if border:
+       warped_masks_outline = {n: make_outline_image(warped_masks[n],cam_colors[n],n) for n in cam_names}
 
+    # stitch
+    stitched_frm = np.zeros((frm_size[1], frm_size[0], 3), dtype=np.uint8)
+    print("Stitching :",end='')
+    for n in cam_names:
+        print(" "+n,end='')
+#        image = cv2.imread(path.join(src_dir,"camera"+n+".jpg"))
+        if imgflag:
+            image = calibImage(n)
+            stitched_frm += (cv2.warpPerspective(image, pjs[n], frm_size) * A_map[n]).astype(np.uint8) # stitch
+        if border:
+            outline, omask = warped_masks_outline[n]
+            cv2.copyTo(outline, omask, dst=stitched_frm)
+
+    return stitched_frm
 
 
 def stitch(mask_dir: str, pj_file: str, src_dir: str,border, imgflag) -> np.ndarray:
@@ -118,7 +141,8 @@ def stitch(mask_dir: str, pj_file: str, src_dir: str,border, imgflag) -> np.ndar
 
     # prepare constants
     cam_names = pj_dict.keys() 
-    pjs, frm_size, _ = _crop({n: np.array(pj_dict[n]["projective_matrix"], dtype=np.float64) for n in cam_names})
+    pjs, frm_size, wid = _crop({n: np.array(pj_dict[n]["projective_matrix"], dtype=np.float64) for n in cam_names})
+    print("Got Frame Size",frm_size,wid)
 
 
 #    print(pjs)
@@ -178,8 +202,8 @@ class App(tk.Frame):
 
         self.csv_button2 = tk.Button(self.json_sub, text="loadAll", command=self.loadImages, width=10)
         self.csv_button2.pack(expand = True, side=tk.LEFT,padx=10)
-#        self.csv_button = tk.Button(self.json_sub, text="ID_JSON", command=self.loadImages, width=10)
-#        self.csv_button.pack(expand = True, side=tk.LEFT,padx=10 )
+        self.csv_button = tk.Button(self.json_sub, text="loadAlpha", command=self.loadAlphaImages, width=10)
+        self.csv_button.pack(expand = True, side=tk.LEFT,padx=10 )
         self.json_sub.pack(expand = True,  padx=10)
 
         self.check_frame = tk.Frame(self.button_frame)
@@ -274,6 +298,27 @@ class App(tk.Frame):
                 int(ch/2),                   
                 image=self.pimg  # 表示画像データ
                 )
+        
+    def loadAlphaImages(self):
+        # generate A map with current Mask
+        with open(pj_file) as f:
+            pj_dict: dict[str, dict[str, int | list[list[float]]]] = json.load(f)
+        generate_A_map(pj_dict,mask_dir , alpha_mask_image_dir)
+
+        self.oimg = stitch_with_alpha(alpha_mask_image_dir, pj_dict , self.cborder.get(),self.cimg.get())
+        ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        cv2.imwrite(f"stitched_{ts}.jpg",self.oimg)
+        cv_image = cv2.resize(self.oimg,dsize=(cw,ch))
+        cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        self.pil_image = Image.fromarray(cv_image)
+        self.pimg  = ImageTk.PhotoImage(image=self.pil_image)
+        self.canvas.delete("all")
+        self.canvas.create_image(
+                int(cw/2),       # 画像表示位置(Canvasの中心)
+                int(ch/2),                   
+                image=self.pimg  # 表示画像データ
+                )
+
 
     def check_id(self, event):
         x = int(event.x / cscale)

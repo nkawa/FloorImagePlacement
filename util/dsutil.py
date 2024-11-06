@@ -5,11 +5,24 @@ import cv2
 import pathlib
 
 
+# for normal
+berth_mode = False
 
 calib_dir = "calib_files"
 empty_image_dir = "img"
 mask_dir = "mask"
-pj_file = "calib_files/projective_matrices_fixed_for_20241003.json"
+#pj_file = "calib_files/projective_matrices_fixed_for_20241003.json"
+pj_file = "calib_files/projective_matrices_nkawa_handcraft_1934.json"
+
+alpha_mask_image_dir = "A_mask"
+# for berth_mode
+
+if berth_mode:
+    calib_dir = "berth/calib_files"
+    empty_image_dir = "berth/img"
+    alpha_mask_image_dir = "berth/A_mask"
+    mask_dir = "berth/mask"
+    pj_file = "berth/calib_files/projective_matrices_berth.json"
 
 
 def load_ds_calib(calib_d):
@@ -26,6 +39,11 @@ def load_ds_calib(calib_d):
     return dsCams
 
 dsCams = load_ds_calib(calib_dir)
+
+def updateDScam(cam):
+    calib_file = calib_dir+"/camera"+cam+".json"
+    dsc = DSCamera(calib_file)
+    return dsc
 
 def calibImage(cam):
     emptyImage = cv2.imread(empty_image_dir+"/camera"+cam+".jpg")

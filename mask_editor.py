@@ -11,7 +11,7 @@ width , height = int(1920 *scale), int(1080*scale)
 
 from util.dscamera import DSCamera
 
-from util.dsutil import *
+from util.dsutil import mask_dir, calib_dir, calibImage
 
 
 class MaskEditor(tk.Frame):
@@ -87,15 +87,15 @@ class MaskEditor(tk.Frame):
 
     def save(self): 
         print("save"+self.cam)
-        fname = "mask/"+self.cam+".png"
+        fname = mask_dir+"/"+self.cam+".png"
         if os.path.exists(fname):
             timestamp= os.path.getmtime(fname)
             mod_time_str = time.strftime("%m%d%H%M", time.localtime(timestamp))
-            next_name = "mask/"+self.cam+"_"+mod_time_str+".png"
+            next_name = mask_dir+"/"+self.cam+"_"+mod_time_str+".png"
             while os.path.exists(next_name):
                 next_name = next_name[:-4] + "_.png"
             os.rename(fname, next_name)
-        cv2.imwrite("mask/"+self.cam+".png", self.or_mask)
+        cv2.imwrite(mask_dir+"/"+self.cam+".png", self.or_mask)
 
     def set_mask(self, mask_path):
         self.mask_path = mask_path

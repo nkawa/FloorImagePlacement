@@ -50,7 +50,7 @@ class ProjectionEditor(tk.Frame):
         self.slider = tk.Scale(self, 
                                variable=self.step,
                                command=self.change_step,
-                               from_=1, to=20,length=150, orient=tk.HORIZONTAL)
+                               from_=1, to=150,length=150, orient=tk.HORIZONTAL)
         self.slider.pack(pady=5)
 
 
@@ -76,14 +76,21 @@ class ProjectionEditor(tk.Frame):
                                from_=1.01, to=1.2,length=150, orient=tk.HORIZONTAL)
         self.zslider.pack(pady=5)
 
-        self.z_frame = tk.Frame(self)
-        self.zup_button = tk.Button(self.z_frame, text="ZoomUp", command=self.zoom_up, width=10)
+        self.zup_button = tk.Button(self, text="ZoomUp", command=self.zoom_up, width=10)
         self.zup_button.pack(pady=5)
 
-        self.zdown_button = tk.Button(self.z_frame, text="ZoomDown", command=self.zoom_down, width=10)
+        self.z_frame = tk.Frame(self)
+
+        self.zlr_button = tk.Button(self.z_frame, text="LR_zoom", command=self.lr_zoom, width=10)
+        self.zlr_button.pack(side=tk.LEFT,padx=10)
+
+        self.zud_button = tk.Button(self.z_frame, text="UD_zoom", command=self.ud_zoom, width=10)
+        self.zud_button.pack(side=tk.LEFT,padx=10)
+        self.z_frame.pack()
+
+        self.zdown_button = tk.Button(self, text="ZoomDown", command=self.zoom_down, width=10)
         self.zdown_button.pack(pady=5)
 
-        self.z_frame.pack()
 
         self.tslider = tk.Scale(self, 
                                variable=self.trape,
@@ -129,20 +136,24 @@ class ProjectionEditor(tk.Frame):
 #        print("SetCam",cam, self.pjs[cam])
  
     def up(self):
-        self.pjs[self.cam][1,2] -= self.step.get()
+        move_mat = np.array(((1,0,0), (0,1, -self.step.get()), (0, 0, 1)), dtype=np.float64)
+        self.pjs[self.cam] = np.dot(move_mat,self.pjs[self.cam])
         self.main.update_pjs(self.cam,self.pjs)
 
 
     def down(self):
-        self.pjs[self.cam][1,2] += self.step.get()
+        move_mat = np.array(((1,0,0), (0,1, self.step.get()), (0, 0, 1)), dtype=np.float64)
+        self.pjs[self.cam] = np.dot(move_mat,self.pjs[self.cam])
         self.main.update_pjs(self.cam,self.pjs)
 
     def left(self):
-        self.pjs[self.cam][0,2] -= self.step.get()
+        move_mat = np.array(((1,0,-self.step.get()), (0,1, 0), (0, 0, 1)), dtype=np.float64)
+        self.pjs[self.cam] = np.dot(move_mat,self.pjs[self.cam])
         self.main.update_pjs(self.cam,self.pjs)
 
     def right(self):
-        self.pjs[self.cam][0,2] += self.step.get()
+        move_mat = np.array(((1,0,self.step.get()), (0,1, 0), (0, 0, 1)), dtype=np.float64)
+        self.pjs[self.cam] = np.dot(move_mat,self.pjs[self.cam])
         self.main.update_pjs(self.cam,self.pjs)
     
     def turn_left(self):
@@ -190,6 +201,26 @@ class ProjectionEditor(tk.Frame):
 #        back_mat = np.array(((1,0, -1920/zoom/2), (0,1, -1080/zoom/2), (0, 0, 1)), dtype=np.float64)
         self.pjs[self.cam] = np.dot(self.pjs[self.cam],np.dot(move_mat,zoom_mat))
         self.main.update_pjs(self.cam,self.pjs)
+
+
+    def lr_zoom(self):
+        zoom = self.zoom.get()
+        diffx = 1920*zoom - 1920
+        diffy = 0
+        move_mat = np.array(((1,0,-diffx/2), (0,1,-diffy/2), (0, 0, 1)), dtype=np.float64)
+        zoom_mat = np.array(((zoom, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=np.float64)
+        self.pjs[self.cam] = np.dot(self.pjs[self.cam],np.dot(move_mat,zoom_mat))
+        self.main.update_pjs(self.cam,self.pjs)
+
+    def ud_zoom(self):
+        zoom = self.zoom.get()
+        diffx = 0
+        diffy = 1080*zoom - 1080
+        move_mat = np.array(((1,0,-diffx/2), (0,1,-diffy/2), (0, 0, 1)), dtype=np.float64)
+        zoom_mat = np.array(((1, 0, 0), (0, zoom,0), (0, 0, 1)), dtype=np.float64)
+        self.pjs[self.cam] = np.dot(self.pjs[self.cam],np.dot(move_mat,zoom_mat))
+        self.main.update_pjs(self.cam,self.pjs)
+
 
     def trapezoid_X_Plus(self):
         trape = self.trape.get()
